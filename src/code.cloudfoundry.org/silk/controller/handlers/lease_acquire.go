@@ -62,3 +62,55 @@ func (l *LeasesAcquire) ServeHTTP(logger lager.Logger, w http.ResponseWriter, re
 	// #nosec G104 - ignore errors when writing HTTP responses so we don't spam our logs during a DoS
 	w.Write(bytes)
 }
+
+//go:generate counterfeiter -o fakes/lease_acquirer.go --fake-name Lease6Acquirer . leaseAcquirer
+type lease6Acquirer interface {
+	AcquireSubnetLease6(underlayIP string, singleOverlayIP bool) (*controller.Lease, error)
+}
+
+type Leases6Acquire struct {
+	Marshaler      marshal.Marshaler
+	Unmarshaler    marshal.Unmarshaler
+	LeaseAcquirer6 lease6Acquirer
+	ErrorResponse  errorResponse
+}
+
+func (l *Leases6Acquire) ServeHTTP(logger lager.Logger, w http.ResponseWriter, req *http.Request) {
+	logger = logger.Session("leases-acquire")
+
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		l.ErrorResponse.BadRequest(logger, w, err, fmt.Sprintf("read-body: %s", err.Error()))
+		return
+	}
+
+	var payload struct {
+		UnderlayIP      string `json:"underlay_ip"`
+		SingleOverlayIP bool   `json:"single_overlay_ip"`
+	}
+	err = l.Unmarshaler.Unmarshal(bodyBytes, &payload)
+	if err != nil {
+		l.ErrorResponse.BadRequest(logger, w, err, fmt.Sprintf("unmarshal-request: %s", err.Error()))
+		return
+	}
+
+	lease, err := l.LeaseAcquirer6.AcquireSubnetLease6(payload.UnderlayIP, payload.SingleOverlayIP)
+	if err != nil {
+		l.ErrorResponse.InternalServerError(logger, w, err, err.Error())
+		return
+	}
+	if lease == nil {
+		err := errors.New("no lease available")
+		l.ErrorResponse.Conflict(logger, w, err, err.Error())
+		return
+	}
+
+	bytes, err := l.Marshaler.Marshal(lease)
+	if err != nil {
+		l.ErrorResponse.InternalServerError(logger, w, err, fmt.Sprintf("marshal-response: %s", err.Error()))
+		return
+	}
+
+	// #nosec G104 - ignore errors when writing HTTP responses so we don't spam our logs during a DoS
+	w.Write(bytes)
+}

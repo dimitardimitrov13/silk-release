@@ -48,6 +48,11 @@ func NewDatabaseHandler(migrator migrateAdapter, db Db) *DatabaseHandler {
 					Up:   []string{createSubnetTable(db.DriverName())},
 					Down: []string{"DROP TABLE subnets"},
 				},
+				{
+					Id:   "2",
+					Up:   []string{createSubnetIPv6Table(db.DriverName())},
+					Down: []string{"DROP TABLE subnets6"},
+				},
 			},
 		},
 		db: db,
@@ -299,4 +304,204 @@ func timestampForDriver(driverName string) (string, error) {
 	default:
 		return "", fmt.Errorf("database type %s is not supported", driverName)
 	}
+}
+
+func (d *DatabaseHandler) AllIPv6() ([]controller.Lease, error) {
+	rows, err := d.db.Query("SELECT underlay_ip, overlay_subnet, overlay_hwaddr FROM subnets6")
+	if err != nil {
+		return nil, fmt.Errorf("selecting all subnets: %s", err)
+	}
+	defer rows.Close() // untested
+	leases, err := rowsToLeases(rows)
+	if err != nil {
+		return nil, fmt.Errorf("selecting all subnets: %s", err)
+	}
+
+	return leases, nil
+}
+
+func (d *DatabaseHandler) AllSingleIPv6Subnets() ([]controller.Lease, error) {
+	rows, err := d.db.Query("SELECT underlay_ip, overlay_subnet, overlay_hwaddr FROM subnets6 WHERE overlay_subnet LIKE '%/128'")
+	if err != nil {
+		return nil, fmt.Errorf("selecting all single ip subnets: %s", err)
+	}
+	defer rows.Close() // untested
+	leases, err := rowsToLeases(rows)
+	if err != nil {
+		return nil, fmt.Errorf("selecting all single ip subnets: %s", err)
+	}
+
+	return leases, nil
+}
+
+func (d *DatabaseHandler) AllBlockSubnetsIPv6() ([]controller.Lease, error) {
+	rows, err := d.db.Query("SELECT underlay_ip, overlay_subnet, overlay_hwaddr FROM subnets6 WHERE overlay_subnet NOT LIKE '%/128'")
+	if err != nil {
+		return nil, fmt.Errorf("selecting all block subnets: %s", err)
+	}
+	defer rows.Close() // untested
+	leases, err := rowsToLeases(rows)
+	if err != nil {
+		return nil, fmt.Errorf("selecting all block subnets: %s", err)
+	}
+
+	return leases, nil
+}
+
+func (d *DatabaseHandler) AllActiveIPv6(duration int) ([]controller.Lease, error) {
+	timestamp, err := timestampForDriver(d.db.DriverName())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.db.Query(fmt.Sprintf("SELECT underlay_ip, overlay_subnet, overlay_hwaddr FROM subnets6 WHERE last_renewed_at + %d > %s", duration, timestamp))
+	if err != nil {
+		return nil, fmt.Errorf("selecting all active subnets: %s", err)
+	}
+	defer rows.Close() // untested
+	leases, err := rowsToLeases(rows)
+	if err != nil {
+		return nil, fmt.Errorf("selecting all active subnets: %s", err)
+	}
+
+	return leases, nil
+}
+
+func (d *DatabaseHandler) OldestExpiredBlockSubnetIPv6(expirationTime int) (*controller.Lease, error) {
+	timestamp, err := timestampForDriver(d.db.DriverName())
+	if err != nil {
+		return nil, err
+	}
+
+	var underlayIP, overlaySubnet, overlayHWAddr string
+	result := d.db.QueryRow(fmt.Sprintf("SELECT underlay_ip, overlay_subnet, overlay_hwaddr FROM subnets6 WHERE overlay_subnet NOT LIKE '%%/128' AND last_renewed_at + %d <= %s ORDER BY last_renewed_at ASC LIMIT 1", expirationTime, timestamp))
+	err = result.Scan(&underlayIP, &overlaySubnet, &overlayHWAddr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan result: %s", err)
+	}
+	return &controller.Lease{
+		UnderlayIP:          underlayIP,
+		OverlaySubnet:       overlaySubnet,
+		OverlayHardwareAddr: overlayHWAddr,
+	}, nil
+}
+
+func (d *DatabaseHandler) OldestExpiredSingleIPv6(expirationTime int) (*controller.Lease, error) {
+	timestamp, err := timestampForDriver(d.db.DriverName())
+	if err != nil {
+		return nil, err
+	}
+
+	var underlayIP, overlaySubnet, overlayHWAddr string
+	result := d.db.QueryRow(fmt.Sprintf("SELECT underlay_ip, overlay_subnet, overlay_hwaddr FROM subnets6 WHERE overlay_subnet LIKE '%%/128' AND last_renewed_at + %d <= %s ORDER BY last_renewed_at ASC LIMIT 1", expirationTime, timestamp))
+	err = result.Scan(&underlayIP, &overlaySubnet, &overlayHWAddr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan result: %s", err)
+	}
+	return &controller.Lease{
+		UnderlayIP:          underlayIP,
+		OverlaySubnet:       overlaySubnet,
+		OverlayHardwareAddr: overlayHWAddr,
+	}, nil
+}
+
+func (d *DatabaseHandler) AddEntryIPv6(lease controller.Lease) error {
+	timestamp, err := timestampForDriver(d.db.DriverName())
+	if err != nil {
+		return err
+	}
+
+	_, err = d.db.Exec(d.db.Rebind(fmt.Sprintf("INSERT INTO subnets6 (underlay_ip, overlay_subnet, overlay_hwaddr, last_renewed_at) VALUES (?, ?, ?, %s)", timestamp)), lease.UnderlayIP, lease.OverlaySubnet, lease.OverlayHardwareAddr)
+	if err != nil {
+		return fmt.Errorf("adding entry: %s", err)
+	}
+	return nil
+}
+
+func (d *DatabaseHandler) DeleteEntryIPv6(underlayIP string) error {
+	deleteRows, err := d.db.Exec(d.db.Rebind("DELETE FROM subnets6 WHERE underlay_ip = ?"), underlayIP)
+
+	if err != nil {
+		return fmt.Errorf("deleting entry: %s", err)
+	}
+
+	rowsAffected, err := deleteRows.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("parse result: %s", err)
+	}
+
+	if rowsAffected == 0 {
+		return RecordNotAffectedError
+	}
+
+	return nil
+}
+
+func (d *DatabaseHandler) LeaseForUnderlayIPv6(underlayIP string) (*controller.Lease, error) {
+	var overlaySubnet, overlayHWAddr string
+	result := d.db.QueryRow(d.db.Rebind("SELECT overlay_subnet, overlay_hwaddr FROM subnets6 WHERE underlay_ip = ?"), underlayIP)
+	err := result.Scan(&overlaySubnet, &overlayHWAddr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err // test me
+	}
+	return &controller.Lease{
+		UnderlayIP:          underlayIP,
+		OverlaySubnet:       overlaySubnet,
+		OverlayHardwareAddr: overlayHWAddr,
+	}, nil
+}
+
+func (d *DatabaseHandler) RenewLeaseForUnderlayIPv6(underlayIP string) error {
+	timestamp, err := timestampForDriver(d.db.DriverName())
+	if err != nil {
+		return err
+	}
+
+	_, err = d.db.Exec(d.db.Rebind(fmt.Sprintf("UPDATE subnets6 SET last_renewed_at = %s WHERE underlay_ip = ?", timestamp)), underlayIP)
+	if err != nil {
+		return fmt.Errorf("renewing lease: %s", err)
+	}
+	return nil
+}
+
+func (d *DatabaseHandler) LastRenewedAtForUnderlayIPv6(underlayIP string) (int64, error) {
+	var lastRenewedAt int64
+	result := d.db.QueryRow(d.db.Rebind("SELECT last_renewed_at FROM subnets6 WHERE underlay_ip = ?"), underlayIP)
+	err := result.Scan(&lastRenewedAt)
+	if err != nil {
+		return 0, err
+	}
+	return lastRenewedAt, nil
+}
+
+func createSubnetIPv6Table(dbType string) string {
+	baseCreateTable := "CREATE TABLE IF NOT EXISTS subnets6 (" +
+		"%s" +
+		", underlay_ip varchar(39) NOT NULL" +
+		", overlay_subnet varchar(43) NOT NULL" +
+		", overlay_hwaddr varchar(17) NOT NULL" +
+		", last_renewed_at bigint NOT NULL" +
+		", UNIQUE (underlay_ip)" +
+		", UNIQUE (overlay_subnet)" +
+		", UNIQUE (overlay_hwaddr)" +
+		");"
+	mysqlId := "id int NOT NULL AUTO_INCREMENT, PRIMARY KEY (id)"
+	psqlId := "id SERIAL PRIMARY KEY"
+
+	switch dbType {
+	case Postgres:
+		return fmt.Sprintf(baseCreateTable, psqlId)
+	case MySQL:
+		return fmt.Sprintf(baseCreateTable, mysqlId)
+	}
+
+	return ""
 }

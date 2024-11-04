@@ -83,22 +83,28 @@ func mainWithError() error {
 	}
 
 	databaseHandler := database.NewDatabaseHandler(&database.MigrateAdapter{}, connectionPool)
+
+	// TODO for IPV6
 	cidrPool := leaser.NewCIDRPool(conf.Network, conf.SubnetPrefixLength)
+
 	leaseController := &leaser.LeaseController{
 		DatabaseHandler:            databaseHandler,
 		HardwareAddressGenerator:   &leaser.HardwareAddressGenerator{},
 		LeaseValidator:             &leaser.LeaseValidator{},
 		AcquireSubnetLeaseAttempts: 10,
 		CIDRPool:                   cidrPool,
+		CIDR6Pool:                  cidrPool, // Fix me
 		LeaseExpirationSeconds:     conf.LeaseExpirationSeconds,
 		Logger:                     logger,
 	}
+
 	migrator := &database.Migrator{
 		DatabaseMigrator:              databaseHandler,
 		MaxMigrationAttempts:          5,
 		MigrationAttemptSleepDuration: time.Second,
 		Logger:                        logger,
 	}
+
 	if err = migrator.TryMigrations(); err != nil {
 		return fmt.Errorf("migrating database: %s", err)
 	}
@@ -117,11 +123,24 @@ func mainWithError() error {
 		ErrorResponse:   errorResponse,
 	}
 
+	leases6Index := &handlers.Leases6Index{
+		Marshaler:       marshal.MarshalFunc(json.Marshal),
+		LeaseRepository: leaseController,
+		ErrorResponse:   errorResponse,
+	}
+
 	leasesAcquire := &handlers.LeasesAcquire{
 		Marshaler:     marshal.MarshalFunc(json.Marshal),
 		Unmarshaler:   marshal.UnmarshalFunc(json.Unmarshal),
 		LeaseAcquirer: leaseController,
 		ErrorResponse: errorResponse,
+	}
+
+	leases6Acquire := &handlers.Leases6Acquire{
+		Marshaler:      marshal.MarshalFunc(json.Marshal),
+		Unmarshaler:    marshal.UnmarshalFunc(json.Unmarshal),
+		LeaseAcquirer6: leaseController,
+		ErrorResponse:  errorResponse,
 	}
 
 	leasesRelease := &handlers.ReleaseLease{
@@ -131,7 +150,20 @@ func mainWithError() error {
 		ErrorResponse: errorResponse,
 	}
 
+	leases6Release := &handlers.ReleaseLease6{
+		Marshaler:     marshal.MarshalFunc(json.Marshal),
+		Unmarshaler:   marshal.UnmarshalFunc(json.Unmarshal),
+		LeaseReleaser: leaseController,
+		ErrorResponse: errorResponse,
+	}
+
 	leasesRenew := &handlers.RenewLease{
+		Unmarshaler:   marshal.UnmarshalFunc(json.Unmarshal),
+		LeaseRenewer:  leaseController,
+		ErrorResponse: errorResponse,
+	}
+
+	leases6Renew := &handlers.RenewLease6{
 		Unmarshaler:   marshal.UnmarshalFunc(json.Unmarshal),
 		LeaseRenewer:  leaseController,
 		ErrorResponse: errorResponse,
@@ -158,12 +190,22 @@ func mainWithError() error {
 			{Name: "leases-acquire", Method: "PUT", Path: "/leases/acquire"},
 			{Name: "leases-release", Method: "PUT", Path: "/leases/release"},
 			{Name: "leases-renew", Method: "PUT", Path: "/leases/renew"},
+
+			{Name: "leases-ipv6-index", Method: "GET", Path: "/leases6"},
+			{Name: "leases-ipv6-acquire", Method: "PUT", Path: "/leases6/acquire"},
+			{Name: "leases-ipv6-release", Method: "PUT", Path: "/leases6/release"},
+			{Name: "leases-ipv6-renew", Method: "PUT", Path: "/leases6/renew"},
 		},
 		rata.Handlers{
 			"leases-index":   metricsWrap("LeasesIndex", logWrap(leasesIndex)),
 			"leases-acquire": metricsWrap("LeasesAcquire", logWrap(leasesAcquire)),
 			"leases-release": metricsWrap("LeasesRelease", logWrap(leasesRelease)),
 			"leases-renew":   metricsWrap("LeasesRenew", logWrap(leasesRenew)),
+
+			"leases-ipv6-index":   metricsWrap("Leases6Index", logWrap(leases6Index)),
+			"leases-ipv6-acquire": metricsWrap("Leases6Acquire", logWrap(leases6Acquire)),
+			"leases-ipv6-release": metricsWrap("Leases6Release", logWrap(leases6Release)),
+			"leases-ipv6-renew":   metricsWrap("Leases6Renew", logWrap(leases6Renew)),
 		},
 	)
 	if err != nil {
