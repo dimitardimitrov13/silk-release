@@ -1,9 +1,9 @@
 package interfacelookup_test
 
 import (
-	"errors"
-
 	"code.cloudfoundry.org/cni-wrapper-plugin/fakes"
+	"errors"
+	"golang.org/x/sys/unix"
 
 	"net"
 
@@ -97,6 +97,24 @@ var _ = Describe("InterfaceNameLookup", func() {
 			It("returns an error", func() {
 				_, err := interfaceNameLookup.GetNameFromIP("10.0.0.0")
 				Expect(err).To(MatchError("discover interface names: sad meow"))
+			})
+
+			Context("and the error is dump interrupted error the first 3 tries", func() {
+				BeforeEach(func() {
+					netlinkAdapter.LinkListReturnsOnCall(0, nil, unix.EINTR)
+					netlinkAdapter.LinkListReturnsOnCall(1, nil, unix.EINTR)
+					netlinkAdapter.LinkListReturnsOnCall(2, nil, unix.EINTR)
+					netlinkAdapter.LinkListReturnsOnCall(3, []netlink.Link{
+						netlinkLinkEth0,
+						netlinkLinkEth1,
+					}, nil)
+				})
+
+				It("succeeds after 4 retries", func() {
+					_, err := interfaceNameLookup.GetNameFromIP("10.0.0.0")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(netlinkAdapter.LinkListCallCount()).To(Equal(4))
+				})
 			})
 		})
 

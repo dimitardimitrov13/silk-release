@@ -1,10 +1,16 @@
 package interfacelookup
 
 import (
+	"code.cloudfoundry.org/lib/common"
 	"fmt"
 	"net"
 
 	"github.com/vishvananda/netlink"
+)
+
+const (
+	retryInterval = 50
+	maxRetries    = 4
 )
 
 //go:generate counterfeiter -o ../fakes/netlinkadapter.go --fake-name NetlinkAdapter . netlinkAdapter
@@ -18,13 +24,19 @@ type InterfaceNameLookup struct {
 }
 
 func (i InterfaceNameLookup) GetNameFromIP(ip string) (string, error) {
-	links, err := i.NetlinkAdapter.LinkList()
+	links, err := common.RetryWithBackoff(retryInterval, maxRetries, func() ([]netlink.Link, error) {
+		return i.NetlinkAdapter.LinkList()
+	})
+
 	if err != nil {
 		return "", fmt.Errorf("discover interface names: %s", err)
 	}
 
 	for _, link := range links {
-		addresses, err := i.NetlinkAdapter.AddrList(link, netlink.FAMILY_V4)
+		addresses, err := common.RetryWithBackoff(retryInterval, maxRetries, func() ([]netlink.Addr, error) {
+			return i.NetlinkAdapter.AddrList(link, netlink.FAMILY_V4)
+		})
+
 		if err != nil {
 			return "", fmt.Errorf("failed to get underlay interface name by link for %s: %s", link.Attrs().Name, err)
 		}

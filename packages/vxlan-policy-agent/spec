@@ -81,6 +81,7 @@ files:
   - code.cloudfoundry.org/vendor/github.com/nu7hatch/gouuid/*.go # gosub-main-module
   - code.cloudfoundry.org/vendor/github.com/openzipkin/zipkin-go/idgenerator/*.go # gosub-main-module
   - code.cloudfoundry.org/vendor/github.com/openzipkin/zipkin-go/model/*.go # gosub-main-module
+  - code.cloudfoundry.org/vendor/github.com/pkg/errors/*.go # gosub-main-module
   - code.cloudfoundry.org/vendor/github.com/tedsuo/ifrit/*.go # gosub-main-module
   - code.cloudfoundry.org/vendor/github.com/tedsuo/ifrit/grouper/*.go # gosub-main-module
   - code.cloudfoundry.org/vendor/github.com/tedsuo/ifrit/http_server/*.go # gosub-main-module
