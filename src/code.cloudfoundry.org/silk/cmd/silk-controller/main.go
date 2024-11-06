@@ -64,6 +64,7 @@ func mainWithError() error {
 	debugServerAddress := fmt.Sprintf("127.0.0.1:%d", conf.DebugServerPort)
 	mainServerAddress := fmt.Sprintf("%s:%d", conf.ListenHost, conf.ListenPort)
 	healthServerAddress := fmt.Sprintf("127.0.0.1:%d", conf.HealthCheckPort)
+
 	tlsConfig, err := mutualtls.NewServerTLSConfig(conf.ServerCertFile, conf.ServerKeyFile, conf.CACertFile)
 	if err != nil {
 		return fmt.Errorf("mutual tls config: %s", err)
@@ -83,22 +84,28 @@ func mainWithError() error {
 	}
 
 	databaseHandler := database.NewDatabaseHandler(&database.MigrateAdapter{}, connectionPool)
+
 	cidrPool := leaser.NewCIDRPool(conf.Network, conf.SubnetPrefixLength)
+	cidr6Pool := leaser.NewCIDRPool(conf.Network, conf.SubnetPrefixLength)
+
 	leaseController := &leaser.LeaseController{
 		DatabaseHandler:            databaseHandler,
 		HardwareAddressGenerator:   &leaser.HardwareAddressGenerator{},
 		LeaseValidator:             &leaser.LeaseValidator{},
 		AcquireSubnetLeaseAttempts: 10,
 		CIDRPool:                   cidrPool,
+		CIDR6Pool:                  cidr6Pool,
 		LeaseExpirationSeconds:     conf.LeaseExpirationSeconds,
 		Logger:                     logger,
 	}
+
 	migrator := &database.Migrator{
 		DatabaseMigrator:              databaseHandler,
 		MaxMigrationAttempts:          5,
 		MigrationAttemptSleepDuration: time.Second,
 		Logger:                        logger,
 	}
+
 	if err = migrator.TryMigrations(); err != nil {
 		return fmt.Errorf("migrating database: %s", err)
 	}

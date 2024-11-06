@@ -36,6 +36,7 @@ func (l *LeasesAcquire) ServeHTTP(logger lager.Logger, w http.ResponseWriter, re
 		UnderlayIP      string `json:"underlay_ip"`
 		SingleOverlayIP bool   `json:"single_overlay_ip"`
 	}
+
 	err = l.Unmarshaler.Unmarshal(bodyBytes, &payload)
 	if err != nil {
 		l.ErrorResponse.BadRequest(logger, w, err, fmt.Sprintf("unmarshal-request: %s", err.Error()))

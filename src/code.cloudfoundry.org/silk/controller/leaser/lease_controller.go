@@ -1,6 +1,7 @@
 package leaser
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
@@ -11,17 +12,17 @@ import (
 
 //go:generate counterfeiter -o fakes/database_handler.go --fake-name DatabaseHandler . databaseHandler
 type databaseHandler interface {
-	AddEntry(controller.Lease) error
-	DeleteEntry(string) error
-	LeaseForUnderlayIP(string) (*controller.Lease, error)
-	LastRenewedAtForUnderlayIP(string) (int64, error)
-	RenewLeaseForUnderlayIP(string) error
-	All() ([]controller.Lease, error)
-	AllBlockSubnets() ([]controller.Lease, error)
-	AllSingleIPSubnets() ([]controller.Lease, error)
+	AddEntry(controller.Lease, bool) error
+	DeleteEntry(string, bool) error
+	LeaseForUnderlayIP(string, bool) (*controller.Lease, error)
+	LastRenewedAtForUnderlayIP(string, bool) (int64, error)
+	RenewLeaseForUnderlayIP(string, bool) error
+	All(bool) ([]controller.Lease, error)
+	AllBlockSubnets(bool) ([]controller.Lease, error)
+	AllSingleIPSubnets(bool) ([]controller.Lease, error)
 	AllActive(int) ([]controller.Lease, error)
-	OldestExpiredBlockSubnet(int) (*controller.Lease, error)
-	OldestExpiredSingleIP(int) (*controller.Lease, error)
+	OldestExpiredBlockSubnet(int, bool) (*controller.Lease, error)
+	OldestExpiredSingleIP(int, bool) (*controller.Lease, error)
 }
 
 //go:generate counterfeiter -o fakes/lease_validator.go --fake-name LeaseValidator . leaseValidator
@@ -46,17 +47,24 @@ type LeaseController struct {
 	HardwareAddressGenerator   hardwareAddressGenerator
 	AcquireSubnetLeaseAttempts int
 	CIDRPool                   cidrPool
+	CIDR6Pool                  cidrPool
 	LeaseValidator             leaseValidator
 	LeaseExpirationSeconds     int
 	Logger                     lager.Logger
 }
 
 func (c *LeaseController) ReleaseSubnetLease(underlayIP string) error {
-	err := c.DatabaseHandler.DeleteEntry(underlayIP)
-	if err == database.RecordNotAffectedError {
+	isIPv6, errIP := IsIPv6(underlayIP)
+	if errIP != nil {
+		return errIP
+	}
+
+	err := c.DatabaseHandler.DeleteEntry(underlayIP, isIPv6)
+	if errors.Is(err, database.RecordNotAffectedError) {
 		c.Logger.Debug("lease-not-found", lager.Data{"underlay_ip": underlayIP})
 		return nil
 	}
+
 	if err != nil {
 		return fmt.Errorf("release lease: %s", err)
 	}
@@ -69,21 +77,30 @@ func (c *LeaseController) AcquireSubnetLease(underlayIP string, singleOverlayIP 
 	var err error
 	var lease *controller.Lease
 
-	if net.ParseIP(underlayIP).To4() == nil {
-		return nil, fmt.Errorf("invalid ipv4 address: %s", underlayIP)
+	isIPv6, errIP := IsIPv6(underlayIP)
+	if errIP != nil {
+		return nil, errIP
 	}
 
-	lease, err = c.DatabaseHandler.LeaseForUnderlayIP(underlayIP)
+	lease, err = c.DatabaseHandler.LeaseForUnderlayIP(underlayIP, isIPv6)
 	if err != nil {
 		return nil, fmt.Errorf("getting lease for underlay ip: %s", err)
 	}
 
 	if lease != nil {
-		if c.CIDRPool.IsMember(lease.OverlaySubnet) {
-			c.Logger.Info("lease-renewed", lager.Data{"lease": lease})
-			return lease, nil
+		if isIPv6 == false {
+			if c.CIDRPool.IsMember(lease.OverlaySubnet) {
+				c.Logger.Info("lease-renewed", lager.Data{"lease": lease})
+				return lease, nil
+			}
+		} else {
+			if c.CIDR6Pool.IsMember(lease.OverlaySubnet) {
+				c.Logger.Info("lease-renewed", lager.Data{"lease": lease})
+				return lease, nil
+			}
 		}
-		err := c.DatabaseHandler.DeleteEntry(underlayIP)
+
+		err := c.DatabaseHandler.DeleteEntry(underlayIP, isIPv6)
 		if err != nil {
 			return nil, fmt.Errorf("deleting lease for underlay ip %s: %s", underlayIP, err)
 		}
@@ -91,7 +108,7 @@ func (c *LeaseController) AcquireSubnetLease(underlayIP string, singleOverlayIP 
 	}
 
 	for numErrs := 0; numErrs < c.AcquireSubnetLeaseAttempts; numErrs++ {
-		lease, err = c.tryAcquireLease(underlayIP, singleOverlayIP)
+		lease, err = c.tryAcquireLease(underlayIP, singleOverlayIP, isIPv6)
 		if lease != nil {
 			c.Logger.Info("lease-acquired", lager.Data{"lease": lease})
 			return lease, nil
@@ -107,12 +124,17 @@ func (c *LeaseController) RenewSubnetLease(lease controller.Lease) error {
 		return controller.NonRetriableError(err.Error())
 	}
 
-	existingLease, err := c.DatabaseHandler.LeaseForUnderlayIP(lease.UnderlayIP)
+	isIPv6, errIP := IsIPv6(lease.UnderlayIP)
+	if errIP != nil {
+		return errIP
+	}
+
+	existingLease, err := c.DatabaseHandler.LeaseForUnderlayIP(lease.UnderlayIP, isIPv6)
 	if err != nil {
 		return fmt.Errorf("getting lease for underlay ip: %s", err)
 	}
 	if existingLease == nil {
-		err := c.DatabaseHandler.AddEntry(lease)
+		err := c.DatabaseHandler.AddEntry(lease, isIPv6)
 		if err != nil {
 			return controller.NonRetriableError(err.Error())
 		}
@@ -120,11 +142,11 @@ func (c *LeaseController) RenewSubnetLease(lease controller.Lease) error {
 		return controller.NonRetriableError("lease mismatch")
 	}
 
-	err = c.DatabaseHandler.RenewLeaseForUnderlayIP(lease.UnderlayIP)
+	err = c.DatabaseHandler.RenewLeaseForUnderlayIP(lease.UnderlayIP, isIPv6)
 	if err != nil {
 		return fmt.Errorf("renewing lease for underlay ip: %s", err)
 	}
-	lastRenewedAt, err := c.DatabaseHandler.LastRenewedAtForUnderlayIP(lease.UnderlayIP)
+	lastRenewedAt, err := c.DatabaseHandler.LastRenewedAtForUnderlayIP(lease.UnderlayIP, isIPv6)
 	if err != nil {
 		return fmt.Errorf("getting last renewed at: %s", err)
 	}
@@ -143,29 +165,33 @@ func (c *LeaseController) RoutableLeases() ([]controller.Lease, error) {
 	return leases, nil
 }
 
-func (c *LeaseController) tryAcquireLease(underlayIP string, singleOverlayIP bool) (*controller.Lease, error) {
+func (c *LeaseController) tryAcquireLease(underlayIP string, singleOverlayIP bool, ipv6 bool) (*controller.Lease, error) {
 	var subnet string
+
 	if singleOverlayIP {
 		var err error
-		subnet, err = c.tryAcquireAvailableSingleIPSubnet(underlayIP)
+		subnet, err = c.tryAcquireAvailableSingleIPSubnet(ipv6)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		var err error
-		subnet, err = c.tryAcquireAvailableBlockSubnet(underlayIP)
+		subnet, err = c.tryAcquireAvailableBlockSubnet(ipv6)
 		if err != nil {
 			return nil, err
 		}
 	}
+
 	if subnet == "" {
 		return nil, nil
 	}
 
+	// TODO IPv6
 	vtepIP, _, err := net.ParseCIDR(subnet)
 	if err != nil {
 		return nil, fmt.Errorf("parse subnet: %s", err)
 	}
+
 	hwAddr, err := c.HardwareAddressGenerator.GenerateForVTEP(vtepIP)
 	if err != nil {
 		return nil, fmt.Errorf("generate hardware address: %s", err)
@@ -177,33 +203,40 @@ func (c *LeaseController) tryAcquireLease(underlayIP string, singleOverlayIP boo
 		OverlayHardwareAddr: hwAddr.String(),
 	}
 
-	err = c.DatabaseHandler.AddEntry(lease)
+	err = c.DatabaseHandler.AddEntry(lease, false)
 	if err != nil {
 		return nil, fmt.Errorf("adding lease entry: %s", err)
 	}
 	return &lease, nil
 }
 
-func (c *LeaseController) tryAcquireAvailableSingleIPSubnet(underlayIP string) (string, error) {
+func (c *LeaseController) tryAcquireAvailableSingleIPSubnet(ipv6 bool) (string, error) {
 	var subnet string
-	leases, err := c.DatabaseHandler.AllSingleIPSubnets()
+
+	leases, err := c.DatabaseHandler.AllSingleIPSubnets(ipv6)
 	if err != nil {
 		return "", fmt.Errorf("getting all single ip subnets: %s", err)
 	}
+
 	var taken []string
 	for _, lease := range leases {
 		taken = append(taken, lease.OverlaySubnet)
 	}
 
-	subnet = c.CIDRPool.GetAvailableSingleIP(taken)
+	if ipv6 == false {
+		subnet = c.CIDRPool.GetAvailableSingleIP(taken)
+	} else {
+		subnet = c.CIDR6Pool.GetAvailableSingleIP(taken)
+	}
+
 	if subnet == "" {
-		lease, err := c.DatabaseHandler.OldestExpiredSingleIP(c.LeaseExpirationSeconds)
+		lease, err := c.DatabaseHandler.OldestExpiredSingleIP(c.LeaseExpirationSeconds, ipv6)
 		if err != nil {
 			return "", fmt.Errorf("get oldest expired single ip: %s", err)
 		} else if lease == nil {
 			return "", nil
 		} else {
-			err := c.DatabaseHandler.DeleteEntry(lease.UnderlayIP)
+			err := c.DatabaseHandler.DeleteEntry(lease.UnderlayIP, ipv6)
 			if err != nil {
 				return "", fmt.Errorf("delete expired subnet: %s", err)
 			}
@@ -214,26 +247,35 @@ func (c *LeaseController) tryAcquireAvailableSingleIPSubnet(underlayIP string) (
 	return subnet, nil
 }
 
-func (c *LeaseController) tryAcquireAvailableBlockSubnet(underlayIP string) (string, error) {
+func (c *LeaseController) tryAcquireAvailableBlockSubnet(ipv6 bool) (string, error) {
+	// TODO the above method is the same as this one use DRY
+
 	var subnet string
-	leases, err := c.DatabaseHandler.AllBlockSubnets()
+
+	leases, err := c.DatabaseHandler.AllBlockSubnets(ipv6)
 	if err != nil {
 		return "", fmt.Errorf("getting all subnets: %s", err)
 	}
+
 	var taken []string
 	for _, lease := range leases {
 		taken = append(taken, lease.OverlaySubnet)
 	}
 
-	subnet = c.CIDRPool.GetAvailableBlock(taken)
+	if ipv6 == false {
+		subnet = c.CIDRPool.GetAvailableBlock(taken)
+	} else {
+		subnet = c.CIDR6Pool.GetAvailableBlock(taken)
+	}
+
 	if subnet == "" {
-		lease, err := c.DatabaseHandler.OldestExpiredBlockSubnet(c.LeaseExpirationSeconds)
+		lease, err := c.DatabaseHandler.OldestExpiredBlockSubnet(c.LeaseExpirationSeconds, ipv6)
 		if err != nil {
 			return "", fmt.Errorf("get oldest expired: %s", err)
 		} else if lease == nil {
 			return "", nil
 		} else {
-			err := c.DatabaseHandler.DeleteEntry(lease.UnderlayIP)
+			err := c.DatabaseHandler.DeleteEntry(lease.UnderlayIP, ipv6)
 			if err != nil {
 				return "", fmt.Errorf("delete expired subnet: %s", err) // test
 			}
@@ -242,4 +284,12 @@ func (c *LeaseController) tryAcquireAvailableBlockSubnet(underlayIP string) (str
 	}
 
 	return subnet, nil
+}
+
+func IsIPv6(ipStr string) (bool, error) {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false, fmt.Errorf("invalid IP address: %s", ipStr)
+	}
+	return ip.To4() == nil && ip.To16() != nil, nil
 }
