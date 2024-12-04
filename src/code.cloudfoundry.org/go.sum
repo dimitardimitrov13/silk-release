@@ -604,6 +604,8 @@ code.cloudfoundry.org/diego-logging-client v0.31.0 h1:oZKkHizm6zatB9sIKp7E3w2foU
 code.cloudfoundry.org/diego-logging-client v0.31.0/go.mod h1:1H47e4sQm+p48ucOAUq3mtQ/k4VQSqyv95qA3ajuI6g=
 code.cloudfoundry.org/executor v0.0.0-20230406153242-208a08c51850 h1:DmHNflNF95mAK5VFERMEt5xF1Kx3KZcM216V+VUB0vI=
 code.cloudfoundry.org/executor v0.0.0-20230406153242-208a08c51850/go.mod h1:oemBimQzPedAfYleiBj968jpfEkSw8F5OsP+zYkVMRk=
+code.cloudfoundry.org/executor v0.0.0-20241029001947-f0c9d0265505 h1:kGtJ/XOgmYLuDWKborsAk0cn2h/MU0Kde6oGEDSmrOU=
+code.cloudfoundry.org/executor v0.0.0-20241029001947-f0c9d0265505/go.mod h1:oemBimQzPedAfYleiBj968jpfEkSw8F5OsP+zYkVMRk=
 code.cloudfoundry.org/filelock v0.20.0 h1:6+NtVNmWXSXWFE17YqE3BLtuc7yysFay23SlI0e66lw=
 code.cloudfoundry.org/filelock v0.20.0/go.mod h1:ZVuSVFUYnvDkYwIMNhfKTUaJ9AnvdoCnUL4x3X0OG3M=
 code.cloudfoundry.org/garden v0.0.0-20241127021034-06ec4d3844e0 h1:UQSuRrdfSyeP/6M0xa9QHMQZoK+QqIyXbzy99Os1yxg=

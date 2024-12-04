@@ -18,7 +18,7 @@ require (
 	code.cloudfoundry.org/cf-networking-helpers v0.28.0
 	code.cloudfoundry.org/debugserver v0.26.0
 	code.cloudfoundry.org/diego-logging-client v0.31.0
-	code.cloudfoundry.org/executor v0.0.0-20230406153242-208a08c51850
+	code.cloudfoundry.org/executor v0.0.0-20241029001947-f0c9d0265505
 	code.cloudfoundry.org/filelock v0.20.0
 	code.cloudfoundry.org/garden v0.0.0-20241127021034-06ec4d3844e0
 	code.cloudfoundry.org/go-loggregator/v9 v9.2.1
