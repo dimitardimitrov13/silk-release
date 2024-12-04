@@ -28,7 +28,7 @@ code.cloudfoundry.org/debugserver
 ## explicit; go 1.22.7
 code.cloudfoundry.org/diego-logging-client
 code.cloudfoundry.org/diego-logging-client/testhelpers
-# code.cloudfoundry.org/executor v0.0.0-20230406153242-208a08c51850
+# code.cloudfoundry.org/executor v0.0.0-20241029001947-f0c9d0265505
 ## explicit
 code.cloudfoundry.org/executor
 # code.cloudfoundry.org/filelock v0.20.0
