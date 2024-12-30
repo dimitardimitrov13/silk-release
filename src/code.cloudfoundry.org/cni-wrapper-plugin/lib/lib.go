@@ -118,6 +118,7 @@ func LoadWrapperConfig(bytes []byte) (*WrapperConfig, error) {
 type PluginController struct {
 	Delegator Delegator
 	IPTables  rules.IPTablesAdapter
+	IP6Tables rules.IPTablesAdapter
 }
 
 func getDelegateParams(netconf map[string]interface{}) (string, []byte, error) {
