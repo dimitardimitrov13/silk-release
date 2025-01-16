@@ -29,7 +29,6 @@ func (c *NetOutChain) Validate() error {
 	for _, denyNetworks := range allDenyNetworkRules {
 		for destinationIndex, destination := range denyNetworks {
 			ip, validatedDestination, err := net.ParseCIDR(destination)
-
 			if err != nil {
 				return fmt.Errorf("deny networks: %s", err)
 			}
@@ -39,6 +38,7 @@ func (c *NetOutChain) Validate() error {
 			} else if !c.IPv6 && ip.To4() == nil {
 				return fmt.Errorf("network is ipv6 in ipv4 chain: %s", ip)
 			}
+			// TODO: check if this modifies the original slice
 			denyNetworks[destinationIndex] = validatedDestination.String()
 		}
 	}

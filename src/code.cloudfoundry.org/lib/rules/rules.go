@@ -176,24 +176,24 @@ func NewNetOutWithPortsRule(startIP, endIP string, startPort, endPort int, proto
 	}
 }
 
-func NewNetOutICMPRule(startIP, endIP string, icmpType garden.ICMPType, icmpCode garden.ICMPCode) IPTablesRule {
+func NewNetOutICMPRule(startIP, endIP string, icmpType garden.ICMPType, icmpCode garden.ICMPCode, ipv6 bool) IPTablesRule {
 	return IPTablesRule{
 		"-m", "iprange",
-		"-p", "icmp",
+		"-p", getICMPProtocolName(ipv6),
 		"--dst-range", fmt.Sprintf("%s-%s", startIP, endIP),
-		"-m", "icmp",
-		"--icmp-type", fmt.Sprintf("%d/%d", icmpType, icmpCode),
+		"-m", getICMPProtocolName(ipv6),
+		getICMPTypeParameterName(ipv6), fmt.Sprintf("%d/%d", icmpType, icmpCode),
 		"--jump", "ACCEPT",
 	}
 }
 
-func NewNetOutICMPLogRule(startIP, endIP string, icmpType garden.ICMPType, icmpCode garden.ICMPCode, chain string) IPTablesRule {
+func NewNetOutICMPLogRule(startIP, endIP string, icmpType garden.ICMPType, icmpCode garden.ICMPCode, chain string, ipv6 bool) IPTablesRule {
 	return IPTablesRule{
 		"-m", "iprange",
-		"-p", "icmp",
+		"-p", getICMPProtocolName(ipv6),
 		"--dst-range", fmt.Sprintf("%s-%s", startIP, endIP),
-		"-m", "icmp",
-		"--icmp-type", fmt.Sprintf("%d/%d", icmpType, icmpCode),
+		"-m", getICMPProtocolName(ipv6),
+		getICMPTypeParameterName(ipv6), fmt.Sprintf("%d/%d", icmpType, icmpCode),
 		"-g", chain,
 	}
 }
@@ -379,6 +379,22 @@ func icmpRejectType(ipv6 bool) string {
 	}
 
 	return "icmp-port-unreachable"
+}
+
+func getICMPProtocolName(ipv6 bool) string {
+	if ipv6 {
+		return "icmpv6"
+	}
+
+	return "icmp"
+}
+
+func getICMPTypeParameterName(ipv6 bool) string {
+	if ipv6 {
+		return "--icmpv6-type"
+	}
+
+	return "--icmp-type"
 }
 
 func newNetOutRejectLogRule(containerHandle, prefix string, deniedLogsPerSec int) IPTablesRule {

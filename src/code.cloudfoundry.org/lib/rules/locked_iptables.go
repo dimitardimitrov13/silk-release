@@ -58,38 +58,33 @@ type locker interface {
 type restorer interface {
 	Restore(ruleState string) error
 	RestoreWithFlags(ruleState string, iptablesFlags ...string) error
+	IsIPv6() bool
 }
 
-type Restorer struct{}
+type Restorer struct {
+	IPv6 bool
+}
 
 func (r *Restorer) Restore(input string) error {
 	return r.RestoreWithFlags(input, "--noflush")
 }
 
+func (r *Restorer) IsIPv6() bool {
+	return r.IPv6
+}
+
 func (r *Restorer) RestoreWithFlags(input string, iptablesFlags ...string) error {
-	cmd := exec.Command("iptables-restore", iptablesFlags...)
-	cmd.Stdin = strings.NewReader(input)
-
-	bytes, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("iptables-restore error: %s combined output: %s", err, string(bytes))
+	command := "iptables-restore"
+	if r.IPv6 {
+		command = "ip6tables-restore"
 	}
-	return nil
-}
 
-type RestorerV6 struct{}
-
-func (r *RestorerV6) Restore(input string) error {
-	return r.RestoreWithFlags(input, "--noflush")
-}
-
-func (r *RestorerV6) RestoreWithFlags(input string, iptablesFlags ...string) error {
-	cmd := exec.Command("ip6tables-restore", iptablesFlags...)
+	cmd := exec.Command(command, iptablesFlags...)
 	cmd.Stdin = strings.NewReader(input)
 
 	bytes, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("iptables-restore error: %s combined output: %s", err, string(bytes))
+		return fmt.Errorf("%s error: %s combined output: %s", command, err, string(bytes))
 	}
 	return nil
 }
@@ -99,7 +94,6 @@ type LockedIPTables struct {
 	Locker         locker
 	Restorer       restorer
 	IPTablesRunner commandRunner
-	EnableIPv6     bool
 }
 
 func handleIPTablesError(err1, err2 error) error {
@@ -233,7 +227,7 @@ func (l *LockedIPTables) DeleteAfterRuleNumKeepReject(table, chain string, ruleN
 		}
 	}
 
-	err = l.IPTables.AppendUnique(table, chain, NewInputDefaultRejectRule(l.EnableIPv6)...)
+	err = l.IPTables.AppendUnique(table, chain, NewInputDefaultRejectRule(l.Restorer.IsIPv6())...)
 	if err != nil {
 		return handleIPTablesError(err, l.Locker.Unlock())
 	}
