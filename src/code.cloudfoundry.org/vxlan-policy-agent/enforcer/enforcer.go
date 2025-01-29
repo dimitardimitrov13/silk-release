@@ -203,7 +203,6 @@ func (e *Enforcer) EnforceRulesAndChain(rulesAndChain RulesWithChain) (string, e
 }
 
 func (e *Enforcer) EnforceOnChain(c Chain, rulesSpec []rules.IPTablesRule) (string, error) {
-	// TODO: do we support ipv6?
 	if c.Timestamped {
 		// used for C2C
 		newTime := e.timestamper.CurrentTime()
@@ -256,8 +255,7 @@ func (e *Enforcer) enforce(logger lager.Logger, table string, parentChain string
 		return fmt.Errorf("creating chain: %s", err)
 	}
 
-	// TODO: support this for ipv6?
-	if e.conf.DisableContainerNetworkPolicy {
+	if e.conf.DisableContainerNetworkPolicy && e.conf.OverlayNetwork != "" {
 		rulespec = append([]rules.IPTablesRule{rules.NewAcceptEverythingRule(e.conf.OverlayNetwork)}, rulespec...)
 	}
 
